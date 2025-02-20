@@ -1,129 +1,25 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <title>リアルタイム文字起こし＆翻訳（履歴付き・最終確定のみ採用）</title>
-  <style>
-    body { font-family: sans-serif; margin: 20px; }
-    .box { border: 1px solid #ccc; padding: 10px; margin-bottom: 20px; min-height: 50px; }
-    .title { font-weight: bold; margin-bottom: 5px; }
-    /* 履歴表示領域はスクロール可能に */
-    #history { max-height: 300px; overflow-y: auto; }
-    .history-entry { margin-bottom: 10px; }
-  </style>
-</head>
-<body>
-  <!-- 現在の認識結果（最終確定済＋途中の認識） -->
-  <div class="box">
-    <div class="title">音声入力（リアルタイム文字起こし）</div>
-    <div id="transcription"></div>
-  </div>
-  <!-- 最新の翻訳結果（最終確定した一文の翻訳） -->
-  <div class="box">
-    <div class="title">最新の翻訳結果</div>
-    <div id="translation"></div>
-  </div>
-  <!-- 過去の認識＆翻訳履歴 -->
-  <div class="box">
-    <div class="title">履歴</div>
-    <div id="history"></div>
-  </div>
-  
-  <script>
-    // Web Speech API の設定（Chrome など webkitSpeechRecognition 対応ブラウザで動作）
-    const recognition = new webkitSpeechRecognition();
-    recognition.lang = 'ja-JP';
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.start();
+<script>
+    const speech = new webkitSpeechRecognition();
+    speech.lang = 'ja-JP';
 
-    // 音声認識が終了したときは自動で再起動する
-    recognition.onend = function() {
-      recognition.start();
-    };
+    const btn = document.getElementById('btn');
+    const content = document.getElementById('content');
 
-    // finalとなった文を配列に保存しておく
-    let finalSentences = [];
-    // JSONP用のスクリプトタグ管理用
-    let currentScript = null;
-    
-    recognition.onresult = function(e) {
-      let interimTranscript = "";
-      // 各結果ごとに処理
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        let transcript = e.results[i][0].transcript;
-        if (e.results[i].isFinal) {
-          // 既に保存済みでなければ追加（重複を防ぐため）
-          if (!finalSentences.includes(transcript)) {
-            finalSentences.push(transcript);
-            // 最終確定した文に対して翻訳リクエストを送信
-            triggerTranslation(transcript);
+    btn.addEventListener('click' , function() {
+        speech.start();
+    });
+
+    speech.onresult = function(e) {
+         speech.stop();
+         if(e.results[0].isFinal){
+             var autotext =  e.results[0][0].transcript
+             content.innerHTML += '<div>'+ autotext +'</div>';
           }
-        } else {
-          interimTranscript += transcript;
-        }
-      }
-      // 現在の認識結果表示：これまでの確定文と、現在進行中の文を結合して表示
-      document.getElementById('transcription').textContent = finalSentences.join(' ') + ' ' + interimTranscript;
-    };
+     }
+     
+     speech.onend = () => { 
+        speech.start() 
+     };
 
-    recognition.onerror = function(e) {
-      console.error('音声認識エラー', e);
-    };
-
-    // finalな文に対してのみ翻訳を実行する関数
-    function triggerTranslation(sentence) {
-      let sourceLang, targetLang;
-      // 自動言語識別：日本語の文字が含まれていれば日本語→英語、なければ英語→日本語
-      if (/[一-龯ぁ-んァ-ン]/.test(sentence)) {
-        sourceLang = 'ja';
-        targetLang = 'en';
-      } else {
-        sourceLang = 'en';
-        targetLang = 'ja';
-      }
-      
-      // JSONP 用のコールバック関数名を動的に生成
-      let callbackName = 'handleTranslation_' + Date.now();
-      window[callbackName] = function(response) {
-        const translationBox = document.getElementById('translation');
-        const historyDiv = document.getElementById('history');
-        if (response && response.translatedText) {
-          // 最新の翻訳結果を表示
-          translationBox.textContent = response.translatedText;
-          // 履歴に原文と翻訳結果を追加
-          let entry = document.createElement('div');
-          entry.className = 'history-entry';
-          entry.innerHTML = '<strong>原文:</strong> ' + sentence + '<br><strong>翻訳:</strong> ' + response.translatedText;
-          historyDiv.appendChild(entry);
-        } else if (response && response.error) {
-          translationBox.textContent = '翻訳エラー: ' + response.error;
-          let entry = document.createElement('div');
-          entry.className = 'history-entry';
-          entry.innerHTML = '<strong>原文:</strong> ' + sentence + '<br><strong>翻訳エラー:</strong> ' + response.error;
-          historyDiv.appendChild(entry);
-        }
-        // 後始末：グローバルからコールバック関数を削除し、スクリプトタグも除去
-        delete window[callbackName];
-        if (currentScript) {
-          currentScript.remove();
-          currentScript = null;
-        }
-      };
-
-      // GAS の JSONP 対応エンドポイントURL（ご自身のデプロイURLに変更してください）
-      let gasUrl = 'https://script.google.com/macros/s/AKfycbxQPbgwSojMClJ6LzNpFwkSf2H9GlNnMMETCZ0TNtdtanKQofUZ6zdGsOEPYx8a4ybm/exec';
-      let params = `?text=${encodeURIComponent(sentence)}&source=${encodeURIComponent(sourceLang)}&target=${encodeURIComponent(targetLang)}&callback=${encodeURIComponent(callbackName)}`;
-      
-      // 以前のスクリプトタグがあれば削除
-      if (currentScript) {
-        currentScript.remove();
-      }
-      
-      currentScript = document.createElement('script');
-      currentScript.src = gasUrl + params;
-      document.body.appendChild(currentScript);
-    }
-  </script>
-</body>
-</html>
+</script>
+s
